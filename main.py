@@ -17,11 +17,11 @@ raw_data = reader.load_velo_scan(file_list[0])
 #print(raw_data.shape[0])
 preProcess = preProcessor.preProcessor()
 
-'''
+
 preProcess.pointCloud2Image(raw_data)
 preProcess.removeGround(15)
 preProcess.cloud_segmentation(1.0472)
-#utils.plot_pointClouds(preProcess.get_rawPointCloud())
-utils.plot_pointClouds(preProcess.get_nonGroundPointCloud())
-'''
-utils.plot_pointClouds(preProcess.filter_ground(raw_data, 400, 400, 0.3, 0.5))
+utils.plot_pointClouds(preProcess.get_rawPointCloud())
+#utils.plot_pointClouds(preProcess.get_nonGroundPointCloud())
+
+#utils.plot_pointClouds(preProcess.filter_ground(raw_data, 400, 400, 0.3, 0.5))
