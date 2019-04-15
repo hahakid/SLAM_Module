@@ -5,25 +5,6 @@
 1. linefit
 2. heightDiff in gridMap
 
-#### result:
-original frame, points num:124668
-
-![](image/origin_img.png) 
-
-linefit(take scan ID < 40 as ROI), points num:46977
-
-![](image/removeGround_linefit40.png)
-
-linefit(take scan ID < 50 as ROI), points num:33524
-
-![](image/removeGround_linefit50.png)
-
-heightDiff in gridMap, thre = 0.5, points num:34983
-
-![](image/removeGround_gridMapHeightDiff0_5.png)
-
-heightDiff in gridMap, thre = 0.3, points num:34983
-
-![](image/removeGround_gridMapHeightDiff0_3.png)
+[ground filter.note](http://note.youdao.com/noteshare?id=e09c0833f22cd8f659613419fc5c6010&sub=8B227E0021A14043B56CBE41ADD98FA1)
 
 ### segmentation
