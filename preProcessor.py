@@ -1,30 +1,35 @@
 import numpy as np
 import lidarConfig as config
 import math
+import time
 ### get lidar parameter
 parameterList_HDL64 = config.get_parameterList("HDL-64")
 #parameterList_VLP16 = config.get_parameterList("VLP-16")
 ### get parameter end
+
 class preProcessor(object):
     '''
     ground remove and cluster ...
     '''
     def __init__(self):
-        self.sensorMountAngle = 0
-        self.start_angle = 0
-        self.end_angle   = 0
-        self.angle_diff  = 0
+        # lidar parameter
         self.count_of_scan= config.get_countOfScan(parameterList_HDL64)
         self.pointsNum_perScan = config.get_pointsNumPerScan(parameterList_HDL64)
         self.angle_bottom = float(config.get_angleBottom(parameterList_HDL64))
         self.angle_res_z  = float(config.get_angleResolutionZ(parameterList_HDL64))
         self.angle_res_xy = float(config.get_angleResolutionXY(parameterList_HDL64))
         self.groundScanIndex  = config.get_groundScanIndex(parameterList_HDL64)
+        # lidar parameter end
+
+        self.sensorMountAngle = 0
+        self.start_angle = 0
+        self.end_angle   = 0
+        self.angle_diff  = 0
+        
         self.range_Matrix     = np.full((self.count_of_scan, self.pointsNum_perScan), float("inf"), float)
         self.groundFlag_Matrix= np.zeros([self.count_of_scan, self.pointsNum_perScan], bool)
         self.labelFlag_Matrix = np.zeros([self.count_of_scan, self.pointsNum_perScan], int)
         self.fullPointClouds  = np.zeros([self.count_of_scan*self.pointsNum_perScan, 4], float)
-        self.fullCloudsRange  = np.zeros(self.count_of_scan*self.pointsNum_perScan, float)
         self.queueIndexX = np.zeros(self.count_of_scan*self.pointsNum_perScan, int)
         self.queueIndexY = np.zeros(self.count_of_scan*self.pointsNum_perScan, int)
         self.allPushedIndexX = np.zeros(self.count_of_scan*self.pointsNum_perScan, int)
@@ -33,17 +38,14 @@ class preProcessor(object):
         self.neighborSearchTable = [(-1,0),(0,1),(0,-1),(1,0)]
         self.segmentTheta = 1.0472
 
-    def pointCloud2Image(self, pointCloudsIn):
+    def ground_filter_linefit(self, pointCloudsIn, slope_threshold):
         '''
         input:  pointClouds (points Set [x, y, z, i])
-        output: start_angle, end_angle
-                range_Matrix (rows:scan, cols:pointNum, pixel:distance)
-                fullPointClouds (index by scanId * pointsNum_perScan + pointIdInScan)
         '''
         self.rawPointClouds = pointCloudsIn.copy()
+        fullPointClouds  = np.zeros([self.count_of_scan*self.pointsNum_perScan, 4], float)
         # calc start and end angle
         points_num  = self.rawPointClouds.shape[0]
-        print(points_num)
         start_point = self.rawPointClouds[0]
         end_point   = self.rawPointClouds[points_num - 1]
         self.start_angle = -math.atan2(start_point[1], start_point[0])
@@ -56,18 +58,13 @@ class preProcessor(object):
             self.end_angle += (2*math.pi)
         self.angle_diff = self.end_angle - self.start_angle
         
-        # print("start angle:", self.start_angle, ", end angle: ", self.end_angle, ", angle_diff: ", self.angle_diff)
-        
+        start = time.clock()
         # point cloud to image
-        count = 0
         for i in range(0, points_num):
             this_point = self.rawPointClouds[i]
             verticle_angle = math.atan2(this_point[2], math.sqrt(this_point[0]**2 + this_point[1]**2)) * 180 / math.pi
-            #if i%1000==0:
-                #print("vertiAngle:", verticle_angle)
             rowIndex = int((verticle_angle - self.angle_bottom)/self.angle_res_z)
             if rowIndex < 0 or rowIndex >= self.count_of_scan:
-                count += 1
                 continue
             
             horizon_angle = math.atan2(this_point[0], this_point[1]) * 180 / math.pi
@@ -80,39 +77,82 @@ class preProcessor(object):
             
             distance = math.sqrt(this_point[0]**2 + this_point[1]**2 + this_point[1]**2)
             self.range_Matrix[int(rowIndex), int(colIndex)] = distance
-            #this_point[3] = rowIndex + colIndex/10000.0
-            #print("row:", rowIndex, ", col:", colIndex)
-            index = rowIndex*self.pointsNum_perScan + colIndex
-            #print("index: ", index)
-            self.fullPointClouds[int(index)] = this_point
-            self.fullCloudsRange[int(index)] = distance
-            #if i%1000==0:
-                #print(i)
-        #print(count)
-        # point clouds projection end
+            index = rowIndex * self.pointsNum_perScan + colIndex
+            fullPointClouds[int(index)] = this_point
+        # point cloud projection end
 
-    def removeGround(self, slope_threshold):
         for j in range(0, self.pointsNum_perScan):   # col
             for i in range(0, self.groundScanIndex): # row
                 # transfer to one dimension index
                 lowerIndex = i * self.pointsNum_perScan + j
                 upperIndex = (i+1) * self.pointsNum_perScan + j
 
-                diff_x = self.fullPointClouds[upperIndex, 0] - self.fullPointClouds[lowerIndex, 0]
-                diff_y = self.fullPointClouds[upperIndex, 1] - self.fullPointClouds[lowerIndex, 1]
-                diff_z = self.fullPointClouds[upperIndex, 2] - self.fullPointClouds[lowerIndex, 2]
+                diff_x = fullPointClouds[upperIndex, 0] - fullPointClouds[lowerIndex, 0]
+                diff_y = fullPointClouds[upperIndex, 1] - fullPointClouds[lowerIndex, 1]
+                diff_z = fullPointClouds[upperIndex, 2] - fullPointClouds[lowerIndex, 2]
                 angle = math.atan2(diff_z, math.sqrt(diff_x**2 + diff_y**2)) * 180 / math.pi
                 if abs(angle - self.sensorMountAngle) < slope_threshold:
                     self.groundFlag_Matrix[i, j]  = True
                     self.groundFlag_Matrix[i+1,j] = True
-                    self.fullPointClouds[lowerIndex, 3] = -1000  # groundFlag
-                    self.fullPointClouds[upperIndex, 3] = -1000  # groundFlag
-
+                    fullPointClouds[lowerIndex, 3] = -1000  # groundFlag
+                    fullPointClouds[upperIndex, 3] = -1000  # groundFlag
+        
+        index = np.where(fullPointClouds[:,3]>0)
+        indices = np.hstack(index)
+        ret_nonGroundPoints = np.squeeze(fullPointClouds[indices])
+        elapsed = (time.clock() - start)
+        print("Time used:", elapsed)
+        print("origin point: ", self.rawPointClouds.shape)
+        print("nonGround point: ", ret_nonGroundPoints.shape)
+        
         for i in range(0, self.count_of_scan):
             for j in range(0, self.pointsNum_perScan):
                 if self.groundFlag_Matrix[i, j] == False or self.range_Matrix[i, j]>10000:
                     self.labelFlag_Matrix[i, j]=-1
+        return ret_nonGroundPoints
     
+    def ground_filter_heightDiff(self, pointCloudsIn, img_len, img_width, grid_width, ground_height):
+        '''
+        input:  pointClouds (points Set [x, y, z, i])
+        img_len: field of view len(x axis, forward)
+        img_width: field of view width(y axis, left)
+        grid_width:
+        ground_height: filter threshold
+        '''
+        self.rawPointClouds = pointCloudsIn.copy()
+        minHeight_Matrix = np.full((img_len, img_width),  10000)
+        maxHeight_Matrix = np.full((img_len, img_width), -10000)
+        
+        start = time.clock()
+        for i in range(0, self.rawPointClouds.shape[0]):
+            this_point = self.rawPointClouds[i]
+            # move lidar to center
+            row_id = int(this_point[0] / grid_width + img_len / 2)
+            col_id = int(this_point[1] / grid_width + img_width / 2)
+            if row_id < img_len and col_id < img_width:
+                if this_point[2] < minHeight_Matrix[row_id, col_id]:
+                    minHeight_Matrix[row_id, col_id] = this_point[2]
+                if this_point[2] > maxHeight_Matrix[row_id, col_id]:
+                    maxHeight_Matrix[row_id, col_id] = this_point[2]
+        height_Matrix = maxHeight_Matrix - minHeight_Matrix
+        
+        for i in range(0, self.rawPointClouds.shape[0]):
+            this_point = self.rawPointClouds[i]
+            # move lidar to center
+            row_id = int(this_point[0] / grid_width + img_len / 2)
+            col_id = int(this_point[1] / grid_width + img_width / 2)
+            if row_id < img_len and col_id < img_width:
+                if height_Matrix[row_id, col_id] < ground_height:
+                    self.rawPointClouds[i, 3] = -1000  # ground flag
+        index = np.where(self.rawPointClouds[:,3] > 0)
+        indices = np.hstack(index)
+        ret_nonGroundPoints = np.squeeze(self.rawPointClouds[indices])
+        elapsed = (time.clock() - start)
+        print("Time used:", elapsed)
+        print("origin point: ", self.rawPointClouds.shape)
+        print("nonGround point: ", ret_nonGroundPoints.shape)
+        return ret_nonGroundPoints
+        
     def label_components(self, row, col):
         lineCountFlag = np.zeros(self.count_of_scan, bool)
         self.queueIndexX[0] = row
@@ -195,13 +235,6 @@ class preProcessor(object):
     def get_rawPointCloud(self):
         print("raw point: ", self.rawPointClouds.shape)
         return self.rawPointClouds.copy()
-
-    def get_nonGroundPointCloud(self):
-        index = np.where(self.fullPointClouds[:,3]>0)
-        indices = np.hstack(index)
-        ret_nonGroundPoints = np.squeeze(self.fullPointClouds[indices])
-        print("nonGround point: ", ret_nonGroundPoints.shape)
-        return ret_nonGroundPoints
     
     def get_segmentedPointCloud(self):
         index = []
@@ -221,62 +254,6 @@ class preProcessor(object):
         ret_segmentedPointCloud = np.squeeze(self.fullPointClouds[indices])
         print("segmented point: ", ret_segmentedPointCloud.shape)
         return ret_segmentedPointCloud
-
-    def filter_ground(self, pointCloudsIn, img_len, img_width, grid_width, ground_height):
-        '''
-        input:  pointClouds (points Set [x, y, z, i])
-        img_len: field of view len(x axis, forward)
-        img_width: field of view width(y axis, left)
-        grid_width:
-        ground_height: filter threshold
-        '''
-        '''
-        for i in range(int(-img_len/2), int(img_len/2)):
-            for j in range(int(-img_width/2), int(img_width/2)):
-                ids = np.where(
-                    (i <= (pointCloudsIn[:, 0] / grid_width)) & ((pointCloudsIn[:, 0] / grid_width) < i + 1) &
-                    (j <= (pointCloudsIn[:, 1] / grid_width)) & ((pointCloudsIn[:, 0] / grid_width) < j + 1)
-                )
-                if ids[0].shape[0] > 0:
-                    if np.max(pointCloudsIn[ids][:, 2]) > ground_height:
-                        indices.append(ids)
-        '''
-        print("min:", np.min(pointCloudsIn[:,2]))
-        print("max:", np.max(pointCloudsIn[:,2]))
-        self.rawPointClouds = pointCloudsIn.copy()
-        minHeight_Matrix = np.full((img_len, img_width),  10000)
-        maxHeight_Matrix = np.full((img_len, img_width), -10000)
-        for i in range(0, self.rawPointClouds.shape[0]):
-            this_point = self.rawPointClouds[i]
-            # move lidar to center
-            row_id = int(this_point[0] / grid_width + img_len / 2)
-            col_id = int(this_point[1] / grid_width + img_width / 2)
-            if row_id < img_len and col_id < img_width:
-                if this_point[2] < minHeight_Matrix[row_id, col_id]:
-                    minHeight_Matrix[row_id, col_id] = this_point[2]
-                if this_point[2] > maxHeight_Matrix[row_id, col_id]:
-                    maxHeight_Matrix[row_id, col_id] = this_point[2]
-        height_Matrix = maxHeight_Matrix - minHeight_Matrix
-        print("max:", np.max(maxHeight_Matrix))
-        print("min:", np.min(minHeight_Matrix))
-        
-        for i in range(0, self.rawPointClouds.shape[0]):
-            this_point = self.rawPointClouds[i]
-            # move lidar to center
-            row_id = int(this_point[0] / grid_width + img_len / 2)
-            col_id = int(this_point[1] / grid_width + img_width / 2)
-            if row_id < img_len and col_id < img_width:
-                if height_Matrix[row_id, col_id] < ground_height:
-                    self.rawPointClouds[i, 3] = -1000  # ground flag
-        index = np.where(self.rawPointClouds[:,3] > 0)
-        indices = np.hstack(index)
-        ret_nonGroundPoints = np.squeeze(self.rawPointClouds[indices])
-        print("origin point: ", self.rawPointClouds.shape)
-        print("nonGround point: ", ret_nonGroundPoints.shape)
-        return ret_nonGroundPoints
-        #elapsed = (time.clock() - start)
-        #print("Time used:", elapsed)
-        #return pointCloudsIn
 
     def test_printParameterList(self):
         print(self.count_of_scan)

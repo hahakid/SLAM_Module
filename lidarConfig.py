@@ -5,7 +5,7 @@ def set_parameterList(count_of_scan, pointsNum_perScan, angle_resolution_z, angl
 
 def get_parameterList(lidar):
     if lidar == "HDL-64":
-        return set_parameterList(64, 2500, 26.9/63, -25.0, 40)
+        return set_parameterList(64, 2500, 26.9/63, -25.0, 50)
     elif lidar == "VLP-16":
         return set_parameterList(16, 1800, 2.0, 15.1, 7)
 
